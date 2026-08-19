@@ -1,0 +1,147 @@
+// =============================================================================
+// UNIVERSAL SALES & PRICING ANALYTICS TOOL — DAX MEASURES
+// =============================================================================
+// Paste each measure into Power BI: right-click "SalesData" table in the
+// Fields pane -> New Measure -> paste the formula (name + code together).
+// These mirror the SQL queries in sql/queries/ from the Python layer, so
+// both tools report the same numbers from the same input file.
+//
+// Requires a DateDimension table marked as a Date Table and related to
+// SalesData[Date] for the YoY measures to work correctly (see the M script
+// file for the DateDimension query, and the build guide for how to mark it).
+// =============================================================================
+
+
+// -----------------------------------------------------------------------------
+// SECTION 1 — Main KPIs
+// -----------------------------------------------------------------------------
+
+Total Revenue =
+SUM ( SalesData[Revenue] )
+
+Total Cost =
+SUM ( SalesData[Cost] )
+
+Total Margin =
+[Total Revenue] - [Total Cost]
+
+Margin % =
+DIVIDE ( [Total Margin], [Total Revenue], 0 )
+
+Total Units =
+SUM ( SalesData[Quantity] )
+
+Avg Ticket =
+DIVIDE ( [Total Revenue], COUNTROWS ( SalesData ), 0 )
+
+Avg Price =
+DIVIDE ( [Total Revenue], [Total Units], 0 )
+
+Distinct Products =
+DISTINCTCOUNT ( SalesData[Product] )
+
+Distinct Countries =
+DISTINCTCOUNT ( SalesData[Country] )
+
+
+// -----------------------------------------------------------------------------
+// SECTION 2 — Year-over-Year comparison
+// -----------------------------------------------------------------------------
+// Requires the DateDimension table (marked as Date Table) related to
+// SalesData[Date]. Put [Total Revenue] and [Revenue YoY %] on a chart with
+// DateDimension[YearMonth] or DateDimension[Date] on the axis.
+
+Revenue Prior Year =
+CALCULATE (
+    [Total Revenue],
+    SAMEPERIODLASTYEAR ( DateDimension[Date] )
+)
+
+Revenue YoY % =
+DIVIDE (
+    [Total Revenue] - [Revenue Prior Year],
+    [Revenue Prior Year],
+    BLANK ()
+)
+
+Revenue YoY Change =
+[Total Revenue] - [Revenue Prior Year]
+
+Margin Prior Year =
+CALCULATE (
+    [Total Margin],
+    SAMEPERIODLASTYEAR ( DateDimension[Date] )
+)
+
+Margin YoY % =
+DIVIDE (
+    [Total Margin] - [Margin Prior Year],
+    [Margin Prior Year],
+    BLANK ()
+)
+
+
+// -----------------------------------------------------------------------------
+// SECTION 3 — Ranking helpers (for Top 10 Product/Category visuals)
+// -----------------------------------------------------------------------------
+// These aren't strictly required — a Bar Chart visual with a Top N filter
+// on Product/Category does this natively — but they're useful for a
+// "Rank" column in a table visual.
+
+Product Revenue Rank =
+RANKX ( ALL ( SalesData[Product] ), [Total Revenue],, DESC )
+
+Category Revenue Rank =
+RANKX ( ALL ( SalesData[Category] ), [Total Revenue],, DESC )
+
+
+// -----------------------------------------------------------------------------
+// SECTION 4 — Price vs. Volume decomposition
+// -----------------------------------------------------------------------------
+// True price/volume/mix decomposition (as implemented in
+// src/transformer.compute_price_volume_decomposition) is row-level logic
+// best done in Python/SQL. In DAX, the practical equivalent for a single
+// selected product/category comparing two periods is:
+
+Price Effect =
+VAR PriceCurrent = [Avg Price]
+VAR PriceLastYear =
+    CALCULATE ( [Avg Price], SAMEPERIODLASTYEAR ( DateDimension[Date] ) )
+VAR QtyCurrent = [Total Units]
+RETURN
+    ( PriceCurrent - PriceLastYear ) * QtyCurrent
+
+Volume Effect =
+VAR QtyCurrent = [Total Units]
+VAR QtyLastYear =
+    CALCULATE ( [Total Units], SAMEPERIODLASTYEAR ( DateDimension[Date] ) )
+VAR PriceLastYear =
+    CALCULATE ( [Avg Price], SAMEPERIODLASTYEAR ( DateDimension[Date] ) )
+RETURN
+    ( QtyCurrent - QtyLastYear ) * PriceLastYear
+
+
+// -----------------------------------------------------------------------------
+// SECTION 5 — Customer segment analysis
+// -----------------------------------------------------------------------------
+
+Segment Revenue Share % =
+DIVIDE (
+    [Total Revenue],
+    CALCULATE ( [Total Revenue], ALL ( SalesData[Customer_Segment] ) ),
+    0
+)
+
+
+// -----------------------------------------------------------------------------
+// SECTION 6 — Multi-dataset comparison (if importing multiple files)
+// -----------------------------------------------------------------------------
+// If you load more than one sales file into the same model (e.g. as
+// separate queries "SalesData_Retail", "SalesData_Pharma" appended with an
+// added "Dataset" column), these measures let you compare them:
+
+// Add a "Dataset" text column to each query before appending, e.g.:
+//   Table.AddColumn(PreviousStep, "Dataset", each "Retail", type text)
+// Then Append Queries into one combined table, and the standard measures
+// above (Total Revenue, Margin %, etc.) can be sliced by [Dataset] using
+// a slicer or a "Dataset" axis on any visual — no special measure needed.

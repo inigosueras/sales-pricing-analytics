@@ -1,0 +1,181 @@
+// =============================================================================
+// UNIVERSAL SALES & PRICING ANALYTICS TOOL — POWER QUERY (M) SCRIPT
+// =============================================================================
+// This is the engine that makes the Power BI template "universal": it reads
+// a CSV file whose path is set by a single Parameter, validates the required
+// columns exist, cleans the data, normalizes near-duplicate category text,
+// and computes the same derived metrics as the Python pipeline (margin,
+// avg price, year/quarter/month) — so both tools agree on the numbers.
+//
+// HOW TO USE THIS FILE (see the step-by-step build guide for full detail):
+//   1. In Power BI Desktop: Home -> Transform Data -> Power Query Editor
+//   2. Manage Parameters -> New Parameter named "FilePath" (Text type),
+//      Current Value = full path to any CSV following the required schema.
+//   3. Home -> New Source -> Blank Query -> Advanced Editor -> paste the
+//      "SalesData" query below (replace the placeholder query entirely).
+//   4. Paste the "Params" query too (or just create the Parameter via UI,
+//      which does the same thing).
+// =============================================================================
+
+
+// -----------------------------------------------------------------------------
+// QUERY: Params  (created automatically if you add "FilePath" via
+// Manage Parameters in the UI — shown here for reference / manual setup)
+// -----------------------------------------------------------------------------
+// let
+//     FilePath = "C:\Users\YourName\Documents\sample_data\retail_sales.csv"
+// in
+//     FilePath
+
+
+// -----------------------------------------------------------------------------
+// QUERY: SalesData  (the main query — paste this into a new Blank Query)
+// -----------------------------------------------------------------------------
+let
+    // ---- 1. Load the file from the dynamic path parameter ----
+    Source = Csv.Document(
+        File.Contents(FilePath),
+        [Delimiter = ",", Columns = 8, Encoding = 65001, QuoteStyle = QuoteStyle.Csv]
+    ),
+    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars = true]),
+
+    // ---- 2. Validate required columns exist (fails loudly if not) ----
+    RequiredColumns = {"Date", "Product", "Category", "Country", "Revenue", "Quantity", "Cost", "Customer_Segment"},
+    ActualColumns = Table.ColumnNames(PromotedHeaders),
+    MissingColumns = List.Difference(RequiredColumns, ActualColumns),
+    ValidationCheck =
+        if List.Count(MissingColumns) > 0 then
+            error Error.Record(
+                "Schema.MissingColumns",
+                "The file is missing required column(s): " & Text.Combine(MissingColumns, ", "),
+                "Expected schema: Date | Product | Category | Country | Revenue | Quantity | Cost | Customer_Segment"
+            )
+        else
+            PromotedHeaders,
+
+    // ---- 3. Enforce correct data types ----
+    TypedTable = Table.TransformColumnTypes(
+        ValidationCheck,
+        {
+            {"Date", type date},
+            {"Product", type text},
+            {"Category", type text},
+            {"Country", type text},
+            {"Revenue", type number},
+            {"Quantity", type number},
+            {"Cost", type number},
+            {"Customer_Segment", type text}
+        }
+    ),
+
+    // ---- 4. Data quality guards (mirrors src/validator.py rules) ----
+    FilteredValid = Table.SelectRows(
+        TypedTable,
+        each [Revenue] >= 0 and [Cost] >= 0 and [Quantity] <> 0 and [Date] <> null
+    ),
+
+    // ---- 5. Normalize categorical text columns ----
+    // Deterministic cleanup: trim, unify case, treat -/_ as spaces.
+    // This mirrors the "basic key" stage of src/normalizer.py. Fuzzy/typo
+    // matching (stage 2 in Python) is not replicated here — M has no
+    // built-in string-similarity function — so for the small number of
+    // remaining near-duplicate typos, use a Conditional Column or a
+    // manual "Replace Values" step per your dataset if needed.
+    NormalizeText = (col as text) as text =>
+        Text.Trim(Text.Lower(Text.Replace(Text.Replace(col, "-", " "), "_", " "))),
+
+    AddNormalizedCols = Table.AddColumn(
+        Table.AddColumn(
+            Table.AddColumn(
+                Table.AddColumn(FilteredValid, "Product_Norm", each NormalizeText([Product]), type text),
+                "Category_Norm", each NormalizeText([Category]), type text
+            ),
+            "Country_Norm", each NormalizeText([Country]), type text
+        ),
+        "Segment_Norm", each NormalizeText([Customer_Segment]), type text
+    ),
+
+    // Rebuild display-friendly Proper Case labels from the normalized key,
+    // so "on-line" / "ONLINE " / "Online" all display consistently as "Online".
+    CleanedCategories = Table.TransformColumns(
+        AddNormalizedCols,
+        {
+            {"Product_Norm", each Text.Proper(_), type text},
+            {"Category_Norm", each Text.Proper(_), type text},
+            {"Country_Norm", each Text.Proper(_), type text},
+            {"Segment_Norm", each Text.Proper(_), type text}
+        }
+    ),
+
+    RemoveOriginalTextCols = Table.RemoveColumns(
+        CleanedCategories, {"Product", "Category", "Country", "Customer_Segment"}
+    ),
+    RenameCleanedCols = Table.RenameColumns(
+        RemoveOriginalTextCols,
+        {
+            {"Product_Norm", "Product"},
+            {"Category_Norm", "Category"},
+            {"Country_Norm", "Country"},
+            {"Segment_Norm", "Customer_Segment"}
+        }
+    ),
+
+    // ---- 6. Derived fields (mirrors src/transformer.py) ----
+    AddMargin = Table.AddColumn(RenameCleanedCols, "Margin", each [Revenue] - [Cost], type number),
+    AddMarginPct = Table.AddColumn(
+        AddMargin, "Margin_Pct",
+        each if [Revenue] = 0 then 0 else ([Revenue] - [Cost]) / [Revenue], type number
+    ),
+    AddAvgPrice = Table.AddColumn(
+        AddMarginPct, "Avg_Price", each [Revenue] / [Quantity], type number
+    ),
+    AddUnitCost = Table.AddColumn(
+        AddAvgPrice, "Unit_Cost", each [Cost] / [Quantity], type number
+    ),
+    AddYear = Table.AddColumn(AddUnitCost, "Year", each Date.Year([Date]), Int64.Type),
+    AddQuarter = Table.AddColumn(
+        AddYear, "Quarter",
+        each Text.From(Date.Year([Date])) & "-Q" & Text.From(Date.QuarterOfYear([Date])), type text
+    ),
+    AddMonth = Table.AddColumn(AddQuarter, "Month", each Date.Month([Date]), Int64.Type),
+    AddYearMonth = Table.AddColumn(
+        AddMonth, "YearMonth",
+        each Text.From(Date.Year([Date])) & "-" & Text.PadStart(Text.From(Date.Month([Date])), 2, "0"),
+        type text
+    ),
+
+    // ---- 7. Final column order (matches data/schema.py) ----
+    FinalTable = Table.SelectColumns(
+        AddYearMonth,
+        {
+            "Date", "Product", "Category", "Country", "Revenue", "Quantity", "Cost",
+            "Customer_Segment", "Margin", "Margin_Pct", "Avg_Price", "Unit_Cost",
+            "Year", "Quarter", "Month", "YearMonth"
+        }
+    )
+in
+    FinalTable
+
+
+// =============================================================================
+// OPTIONAL: Date dimension table (recommended for proper YoY time
+// intelligence in DAX — paste as a second Blank Query named "DateDimension")
+// =============================================================================
+// let
+//     MinDate = Date.StartOfYear(List.Min(SalesData[Date])),
+//     MaxDate = Date.EndOfYear(List.Max(SalesData[Date])),
+//     DayCount = Duration.Days(MaxDate - MinDate) + 1,
+//     Dates = List.Dates(MinDate, DayCount, #duration(1, 0, 0, 0)),
+//     ToTable = Table.FromList(Dates, Splitter.SplitByNothing(), {"Date"}),
+//     TypedDate = Table.TransformColumnTypes(ToTable, {{"Date", type date}}),
+//     AddYear = Table.AddColumn(TypedDate, "Year", each Date.Year([Date]), Int64.Type),
+//     AddMonth = Table.AddColumn(AddYear, "Month", each Date.Month([Date]), Int64.Type),
+//     AddMonthName = Table.AddColumn(AddMonth, "MonthName", each Date.ToText([Date], "MMMM"), type text),
+//     AddQuarter = Table.AddColumn(AddMonthName, "Quarter", each "Q" & Text.From(Date.QuarterOfYear([Date])), type text),
+//     AddYearMonth = Table.AddColumn(AddQuarter, "YearMonth", each Text.From(Date.Year([Date])) & "-" & Text.PadStart(Text.From(Date.Month([Date])), 2, "0"), type text)
+// in
+//     AddYearMonth
+//
+// After creating this table, mark it as a Date Table in Power BI:
+// Table tools -> Mark as Date Table -> select "Date" column.
+// Then build a relationship: DateDimension[Date] -> SalesData[Date] (1-to-many).
