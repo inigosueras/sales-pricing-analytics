@@ -116,6 +116,14 @@ def get_filter_options(conn: sqlite3.Connection, filters: Filters | None = None)
     }
 
 
+def get_multi_dimension_breakdown(
+    conn: sqlite3.Connection, filters: Filters, dimensions: list[str], limit: int | None = None
+) -> pd.DataFrame:
+    """Breakdown grouped by 1–3 dimensions at once (Excel PivotTable style)."""
+    from src.db import run_multi_dimension_query
+    return run_multi_dimension_query(conn, filters, dimensions, limit=limit)
+
+
 def get_datasets(conn: sqlite3.Connection) -> pd.DataFrame:
     """List all registered datasets — powers the dataset picker in Streamlit."""
     from src.db import list_datasets

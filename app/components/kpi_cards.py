@@ -19,6 +19,7 @@ def render_kpi_cards(kpis: dict) -> None:
     col3.metric("Avg Ticket", f"${kpis.get('avg_ticket', 0):,.2f}")
     col4.metric("Units Sold", f"{kpis.get('total_units', 0):,.0f}")
 
-    col5, col6 = st.columns(2)
+    col5, col6, col7 = st.columns(3)
     col5.metric("Total Margin", f"${kpis.get('total_margin', 0):,.0f}")
     col6.metric("Distinct Products", f"{kpis.get('distinct_products', 0):,.0f}")
+    col7.metric("Distinct Countries", f"{kpis.get('distinct_countries', 0):,.0f}")

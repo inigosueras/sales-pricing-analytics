@@ -158,6 +158,47 @@ class Filters:
 _ALLOWED_DIMENSIONS = {"Product", "Category", "Country", "Customer_Segment", "dataset_id"}
 
 
+def run_multi_dimension_query(
+    conn: sqlite3.Connection,
+    filters: Filters | None,
+    dimensions: list[str],
+    limit: int | None = None,
+) -> pd.DataFrame:
+    """
+    Groups by 1–N dimensions at once (e.g. Country + Category + Product),
+    like an Excel PivotTable with multiple row fields. Each dimension is
+    validated against the same allowlist used by run_query — since SQLite
+    can't parameterize column/identifier names, this allowlist check is
+    what keeps dynamic GROUP BY safe from injection.
+    """
+    if not dimensions:
+        raise ValueError("At least one dimension is required.")
+    invalid = [d for d in dimensions if d not in _ALLOWED_DIMENSIONS]
+    if invalid:
+        raise ValueError(f"Invalid dimension(s): {invalid}. Must be from {_ALLOWED_DIMENSIONS}.")
+
+    filters = filters or Filters()
+    where_sql, params = filters.to_where_clause()
+    dims_sql = ", ".join(dimensions)
+    limit_sql = f"LIMIT {int(limit)}" if limit else ""
+
+    sql = f"""
+        SELECT
+            {dims_sql},
+            SUM(Revenue) AS revenue,
+            SUM(Margin) AS margin,
+            ROUND(100.0 * SUM(Margin) / NULLIF(SUM(Revenue), 0), 2) AS margin_pct,
+            SUM(Quantity) AS units,
+            ROUND(SUM(Revenue) / NULLIF(COUNT(*), 0), 2) AS avg_ticket
+        FROM sales_data
+        {where_sql}
+        GROUP BY {dims_sql}
+        ORDER BY revenue DESC
+        {limit_sql}
+    """
+    return pd.read_sql_query(sql, conn, params=params)
+
+
 def _load_query(name: str) -> str:
     path = QUERIES_DIR / f"{name}.sql"
     if not path.exists():
