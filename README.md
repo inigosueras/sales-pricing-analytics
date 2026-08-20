@@ -12,7 +12,7 @@ Use the "Load sample" buttons on the Home page for an instant demo — no upload
 
 ## Why this project
 
-Most portfolio pieces show "I analyzed a dataset." This one shows "I built a tool that analyzes any dataset." The same Python engine, tested across three unrelated industries with zero code changes, powers both an interactive web app and a Power BI template — the two environments a BI/Pricing Analytics professional is typically expected to work in.
+Most portfolio pieces show "I analyzed a dataset." This one shows "I built a tool that analyzes any dataset." The same Python engine, tested across three unrelated industries with zero code changes, powers both an interactive web app and a ready-to-use Power BI template (`.pbit`, verified number-for-number against Python) — the two environments a BI/Pricing Analytics professional is typically expected to work in.
 
 ## What it does
 
@@ -61,10 +61,11 @@ sales-pricing-analytics/
 │   ├── pages/                   # Overview, Trends, Products & Categories, Geography, Price/Volume, Segments, Explorer
 │   └── components/              # Reusable filters (session-persisted), KPI cards, Plotly chart builders
 │
-├── powerbi/                     # Power BI template build materials
+├── powerbi/                     # Power BI template — ready to use
+│   ├── Universal_Sales_Pricing_Template.pbit  # The completed .pbit template
 │   ├── power_query_m_script.txt # M code: dynamic file-path parameter, validation, cleaning, derived fields
 │   ├── dax_measures.txt         # DAX measures mirroring the SQL queries
-│   └── BUILD_GUIDE.md           # Step-by-step guide to assemble the .pbit template
+│   └── BUILD_GUIDE.md           # Step-by-step guide showing how the template was assembled
 │
 └── tests/                       # 32 automated tests covering validator, normalizer, transformer, db
 ```
@@ -105,7 +106,11 @@ python -m pytest tests/ -v
 
 ## Power BI template
 
-See [`powerbi/BUILD_GUIDE.md`](powerbi/BUILD_GUIDE.md) for the full step-by-step assembly guide. The M script and DAX measures are ready to paste into Power BI Desktop; the guide covers parameter setup, the date table relationship, and building the report pages.
+The ready-to-use template is [`powerbi/Universal_Sales_Pricing_Template.pbit`](powerbi/Universal_Sales_Pricing_Template.pbit) — download it, open it in Power BI Desktop, and when prompted, point the `FilePath` parameter to any CSV following the required schema (e.g. one of the files in `data/samples/`). The report rebuilds automatically.
+
+Its KPIs were verified number-for-number against the Python engine using the retail sample dataset.
+
+If you want to see how it was built, or build your own variant, [`powerbi/BUILD_GUIDE.md`](powerbi/BUILD_GUIDE.md) has the full step-by-step assembly guide, with the underlying M script and DAX measures.
 
 ## Data & security notes
 
